@@ -29,7 +29,7 @@ from tools.sense_studio.annotation import annotation_bp
 from tools.sense_studio.testing import testing_bp
 from tools.sense_studio.training import training_bp
 from tools.sense_studio.video_recording import video_recording_bp
-
+from tools.sense_studio.project_tags import project_tags_bp
 
 app = Flask(__name__)
 app.secret_key = 'd66HR8dç"f_-àgjYYic*dh'
@@ -39,6 +39,7 @@ app.register_blueprint(annotation_bp, url_prefix='/annotation')
 app.register_blueprint(video_recording_bp, url_prefix='/video-recording')
 app.register_blueprint(training_bp, url_prefix='/training')
 app.register_blueprint(testing_bp, url_prefix='/testing')
+app.register_blueprint(project_tags_bp, url_prefix='/tags')
 
 socketio.init_app(app)
 
@@ -208,8 +209,10 @@ def project_details(project):
                 'total': len(os.listdir(videos_dir)),
                 'tagged': len(os.listdir(tags_dir)) if os.path.exists(tags_dir) else 0,
             }
-
-    return render_template('project_details.html', config=config, path=path, stats=stats, project=config['name'])
+    project_tags = config.get('project_tags', {})
+    project_tags = {tag_idx: tag_name for tag_name, tag_idx in project_tags.items()}
+    return render_template('project_details.html', config=config, path=path, stats=stats, project=config['name'],
+                           project_tags=project_tags)
 
 
 @app.route('/add-class/<string:project>', methods=['POST'])
@@ -217,15 +220,14 @@ def add_class(project):
     """
     Add a new class to the given project.
     """
+    data = request.form
     project = urllib.parse.unquote(project)
     path = project_utils.lookup_project_path(project)
-
-    # Get class name and tags
-    class_name, tag1, tag2 = utils.get_class_name_and_tags(request.form)
+    class_name = data['className']
 
     # Update project config
     config = project_utils.load_project_config(path)
-    config['classes'][class_name] = [tag1, tag2]
+    config['classes'][class_name] = []
     project_utils.write_project_config(path, config)
 
     # Setup directory structure
@@ -274,19 +276,20 @@ def toggle_project_setting():
 @app.route('/edit-class/<string:project>/<string:class_name>', methods=['POST'])
 def edit_class(project, class_name):
     """
-    Edit the class name and tags for an existing class in the given project.
+    Edit the name for an existing class in the given project.
     """
+    data = request.form
     project = urllib.parse.unquote(project)
     class_name = urllib.parse.unquote(class_name)
     path = project_utils.lookup_project_path(project)
-
-    # Get new class name and tags
-    new_class_name, new_tag1, new_tag2 = utils.get_class_name_and_tags(request.form)
+    new_class_name = data['className']
 
     # Update project config
     config = project_utils.load_project_config(path)
+    tags = config['classes'][class_name]
+
     del config['classes'][class_name]
-    config['classes'][new_class_name] = [new_tag1, new_tag2]
+    config['classes'][new_class_name] = tags
     project_utils.write_project_config(path, config)
 
     # Update directory names
@@ -335,6 +338,43 @@ def remove_class(project, class_name):
     project_utils.write_project_config(path, config)
 
     return redirect(url_for("project_details", project=project))
+
+
+@app.route('/assign-tag-to-class', methods=['POST'])
+def assign_tag_to_class():
+    """
+    Assign selected tag to class label in project config.
+    """
+    data = request.json
+    path = data['path']
+    tag_index = data['tagIndex']
+    class_name = data['className']
+
+    config = project_utils.load_project_config(path)
+    class_tags = config['classes'][class_name]
+    class_tags.append(int(tag_index))
+    class_tags.sort()
+    config['classes'][class_name] = class_tags
+
+    project_utils.write_project_config(path, config)
+    return jsonify(success=True)
+
+
+@app.route('/remove-tag-from-class', methods=['POST'])
+def remove_tag_from_class():
+    """
+    Remove selected tag from class label in project config.
+    """
+    data = request.json
+    path = data['path']
+    tag_index = data['tagIndex']
+    class_name = data['className']
+
+    config = project_utils.load_project_config(path)
+    config['classes'][class_name].remove(int(tag_index))
+
+    project_utils.write_project_config(path, config)
+    return jsonify(success=True)
 
 
 @app.after_request
